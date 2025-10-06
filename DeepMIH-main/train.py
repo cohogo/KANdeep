@@ -13,6 +13,9 @@ from model import *
 from imp_subnet import *
 import torchvision.transforms as T
 import config as c
+import importlib
+config_module = os.environ.get("DEEPMIH_CONFIG", "config")
+c = importlib.import_module(config_module)
 from tensorboardX import SummaryWriter
 from datasets import trainloader, testloader
 import viz
@@ -20,6 +23,7 @@ import modules.module_util as mutil
 import modules.Unet_common as common
 import warnings
 from vgg_loss import VGGLoss
+from torch.nn.utils import clip_grad_norm_
 warnings.filterwarnings("ignore")
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -86,15 +90,33 @@ def get_parameter_number(net):
     return {'Total': total_num, 'Trainable': trainable_num}
 
 
-def load(name, net, optim):
-    state_dicts = torch.load(name)
-    network_state_dict = {k: v for k, v in state_dicts['net'].items() if 'tmp_var' not in k}
-    net.load_state_dict(network_state_dict)
-    try:
-        optim.load_state_dict(state_dicts['opt'])
-    except:
-        print('Cannot load optimizer for some reason or other')
-
+def load(name, net, optim, skip_substrings=None):
+    state_dicts = torch.load(name, map_location=device)
+    pretrained_state = state_dicts.get('net', {})
+    if skip_substrings is None:
+        skip_substrings = getattr(c, 'pretrained_skip_substrings', tuple())
+    model_state = net.state_dict()
+    filtered_state = {}
+    for key, value in pretrained_state.items():
+        if 'tmp_var' in key:
+            continue
+        if any(substr in key for substr in skip_substrings):
+            print(f"Skipping weight: {key} (matches skip substrings)")
+            continue
+        if key in model_state and model_state[key].shape == value.shape:
+            filtered_state[key] = value
+        else:
+            print(f"Skipping weight: {key} (missing or shape mismatch)")
+    load_result = net.load_state_dict(filtered_state, strict=False)
+    if load_result.missing_keys:
+        print(f"Warning: {len(load_result.missing_keys)} parameters left at initialization (missing in checkpoint)")
+    if load_result.unexpected_keys:
+        print(f"Warning: {len(load_result.unexpected_keys)} unexpected parameters ignored from checkpoint")
+    if 'opt' in state_dicts:
+        try:
+            optim.load_state_dict(state_dicts['opt'])
+        except Exception as exc:
+            print(f'Cannot load optimizer for some reason or other: {exc}')
 
 def init_net3(mod):
     for key, param in mod.named_parameters():
@@ -258,7 +280,10 @@ try:
                          + c.lamda_guide_2 * g_loss_2 + c.lamda_low_frequency_1 * l_loss_1 + c.lamda_low_frequency_2 * l_loss_2
             total_loss = total_loss + 0.01 * perc_loss
             total_loss.backward()
-
+            if getattr(c, 'grad_clip_norm', None) is not None:
+                clip_grad_norm_(net1.parameters(), c.grad_clip_norm)
+                clip_grad_norm_(net2.parameters(), c.grad_clip_norm)
+                clip_grad_norm_(net3.parameters(), c.grad_clip_norm)
             if c.optim_step_1:
                 optim1.step()
 

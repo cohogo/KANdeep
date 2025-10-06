@@ -2,11 +2,14 @@ import sys
 import glob
 from os.path import join
 import numpy as np
+import os
 from PIL import Image, ImageEnhance
 import torch
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 import torchvision.transforms as T
-import config as c
+import importlib
+config_module = os.environ.get("DEEPMIH_CONFIG", "config")
+c = importlib.import_module(config_module)
 from natsort import natsorted
 
 

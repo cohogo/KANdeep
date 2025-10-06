@@ -8,7 +8,9 @@ channels_in = 3
 log10_lr = -5.0
 lr = 10 ** log10_lr
 lr3 = 10 ** -5.0
-epochs = 50000
+grad_clip_norm = 1.0
+pretrained_skip_substrings = ("kan",)
+epochs = 1000
 weight_decay = 1e-5
 init_scale = 0.01
 
