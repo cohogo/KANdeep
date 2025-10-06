@@ -47,11 +47,11 @@ shuffle_val = False
 val_freq = 1
 
 # Dataset
-Dataset_mode = 'COCO'  # COCO / DIV2K /
+Dataset_mode = 'DIV2K'  # COCO / DIV2K /
 Dataset_VAL_mode = 'DIV2K'  # COCO / DIV2K / ImageNet
 
-TRAIN_PATH_DIV2K = '/media/disk2/jjp/jjp/Dataset/DIV2K/DIV2K_train_HR/'
-VAL_PATH_DIV2K = '/media/disk2/jjp/jjp/Dataset/DIV2K/DIV2K_valid_HR/'
+TRAIN_PATH_DIV2K = r'/root/autodl-fs/DeepMIH_main/div2k/DIV2K_train_HR/DIV2K_train_HR'
+VAL_PATH_DIV2K   = r'/root/autodl-fs/DeepMIH_main/div2k/DIV2K_valid_HR/DIV2K_valid_HR'
 
 VAL_PATH_COCO = '/media/disk2/jjp/jjp/Dataset/COCO/val2017/'
 TEST_PATH_COCO = '/media/disk2/jjp/jjp/Dataset/COCO/test2017/'
@@ -62,11 +62,12 @@ VAL_PATH_IMAGENET = '/media/data/jjp/Imagenet/ILSVRC2012_img_val'
 loss_display_cutoff = 2.0  # cut off the loss so the plot isn't ruined
 loss_names = ['L', 'lr']
 silent = False
+kan_verbose = False
 live_visualization = False
 progress_bar = False
 
 # Saving checkpoints:
-MODEL_PATH = ''
+MODEL_PATH = '/root/autodl-fs/DeepMIH_main/model'
 checkpoint_on_error = True
 SAVE_freq = 1
 
@@ -90,7 +91,11 @@ tain_next = False
 trained_epoch = 3000
 
 pretrain = True
-PRETRAIN_PATH = '/home/jjp/DeepMIH/model/'
+# 主模型加载路径
+PRETRAIN_PATH = r'/root/autodl-fs/DeepMIH_main/model/'
 suffix_pretrain = 'model_checkpoint_03000'
-PRETRAIN_PATH_3 = '/home/jjp/DeepMIH/model/'
+
+# 第三子网络（ImpMapBlock）预训练路径
+# ⚠️ 注意：这里一定要是“model”不是“models”
+PRETRAIN_PATH_3 = r'/root/autodl-fs/DeepMIH_main/model/'
 suffix_pretrain_3 = 'model_checkpoint_03000'

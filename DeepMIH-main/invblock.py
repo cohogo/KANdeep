@@ -63,28 +63,28 @@ class INV_block_affine(nn.Module):
             self.split_len1 + self.imp,
             self.split_len2,
             identity_init=True,
-            verbose=True,
+            verbose=c.kan_verbose,
         )
         # η
         self.y = KANCouplingNet(
             self.split_len1 + self.imp,
             self.split_len2,
             identity_init=True,
-            verbose=True,
+            verbose=c.kan_verbose,
         )
         # φ
         self.f = KANCouplingNet(
             self.split_len2,
             self.split_len1 + self.imp,
             identity_init=True,
-            verbose=True,
+            verbose=c.kan_verbose,
         )
         # ψ
         self.p = KANCouplingNet(
             self.split_len2,
             self.split_len1 + self.imp,
             identity_init=True,
-            verbose=True,
+            verbose=c.kan_verbose,
         )
 
     def e(self, s):

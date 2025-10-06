@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import sys
 import os
+from collections import Counter
 import torch
 import torch.nn
 import torch.optim
@@ -89,6 +90,51 @@ def get_parameter_number(net):
     trainable_num = sum(p.numel() for p in net.parameters() if p.requires_grad)
     return {'Total': total_num, 'Trainable': trainable_num}
 
+def _summarize_skipped_weights(skipped, filtered_count):
+    """Print a human-readable explanation for skipped checkpoint weights."""
+
+    if not skipped:
+        return
+
+    conv_block_counts = Counter()
+    other_mismatch = 0
+    for key in skipped:
+        parent = key.rsplit('.', 1)[0]
+        parts = parent.split('.')
+        try:
+            dense_idx = parts.index('dense')
+        except ValueError:
+            other_mismatch += 1
+            continue
+        block = '.'.join(parts[: dense_idx + 1])
+        if 'conv' in parts[dense_idx + 1:]:
+            conv_block_counts[block] += 1
+        else:
+            other_mismatch += 1
+
+    if conv_block_counts:
+        affected = ', '.join(sorted(conv_block_counts.keys())[:5])
+        if len(conv_block_counts) > 5:
+            affected += ', ...'
+        print(
+            "Notice: {} convolutional dense blocks in the checkpoint do not exist in the "
+            "current model (which uses KAN subnetworks).".format(sum(conv_block_counts.values()))
+        )
+        print(
+            "Affected blocks include: {}. Use a checkpoint trained with the same "
+            "architecture or disable pretraining when switching to KAN coupling nets.".format(
+                affected
+            )
+        )
+
+    if other_mismatch:
+        print(f"Additional {other_mismatch} parameters were skipped due to shape mismatches.")
+
+    if filtered_count:
+        print(
+            f"{filtered_count} parameters were explicitly skipped because their keys matched "
+            "the configured substrings {getattr(c, 'pretrained_skip_substrings', tuple())}."
+        )
 
 def load(name, net, optim, skip_substrings=None):
     state_dicts = torch.load(name, map_location=device)
@@ -97,21 +143,26 @@ def load(name, net, optim, skip_substrings=None):
         skip_substrings = getattr(c, 'pretrained_skip_substrings', tuple())
     model_state = net.state_dict()
     filtered_state = {}
+    skipped_mismatch = []
+    filtered_matches = 0
     for key, value in pretrained_state.items():
         if 'tmp_var' in key:
             continue
         if any(substr in key for substr in skip_substrings):
             print(f"Skipping weight: {key} (matches skip substrings)")
+            filtered_matches += 1
             continue
         if key in model_state and model_state[key].shape == value.shape:
             filtered_state[key] = value
         else:
             print(f"Skipping weight: {key} (missing or shape mismatch)")
+            skipped_mismatch.append(key)
     load_result = net.load_state_dict(filtered_state, strict=False)
     if load_result.missing_keys:
         print(f"Warning: {len(load_result.missing_keys)} parameters left at initialization (missing in checkpoint)")
     if load_result.unexpected_keys:
         print(f"Warning: {len(load_result.unexpected_keys)} unexpected parameters ignored from checkpoint")
+    _summarize_skipped_weights(skipped_mismatch, filtered_matches)
     if 'opt' in state_dicts:
         try:
             optim.load_state_dict(state_dicts['opt'])
