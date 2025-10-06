@@ -28,8 +28,10 @@ class KANCouplingNet(nn.Module):
         symbolic_enabled: bool = False,
         enable_speed: bool = True,
         identity_init: bool = False,
+        auto_save: bool = False,
+        ckpt_path: Optional[str] = None,
         verbose: bool = False,
-        seed: int | None = 42,
+        seed: Optional[int] = 42,
     ) -> None:
         super().__init__()
 
@@ -42,7 +44,17 @@ class KANCouplingNet(nn.Module):
             hidden_list = tuple(hidden_dims)
 
         width = [in_channels, *hidden_list, out_channels]
-        self.kan = KAN(width=width, grid=grid, k=k, symbolic_enabled=symbolic_enabled)
+        kan_kwargs = {
+            "width": width,
+            "grid": grid,
+            "k": k,
+            "symbolic_enabled": symbolic_enabled,
+            "auto_save": auto_save,
+        }
+        if ckpt_path is not None:
+            kan_kwargs["ckpt_path"] = ckpt_path
+
+        self.kan = KAN(**kan_kwargs)
         self.in_channels = in_channels
         self.out_channels = out_channels
 
