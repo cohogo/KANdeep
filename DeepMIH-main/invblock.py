@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from denseblock import Dense
 import config as c
-
+from kan_layers import KANCouplingNet
 
 class INV_block_addition(nn.Module):
     def __init__(self, subnet_constructor=Dense, clamp=c.clamp, harr=True, in_1=3, in_2=3):
@@ -59,13 +59,33 @@ class INV_block_affine(nn.Module):
             self.imp = 0
 
         # ρ
-        self.r = subnet_constructor(self.split_len1 + self.imp, self.split_len2)
+        self.r = KANCouplingNet(
+            self.split_len1 + self.imp,
+            self.split_len2,
+            identity_init=True,
+            verbose=True,
+        )
         # η
-        self.y = subnet_constructor(self.split_len1 + self.imp, self.split_len2)
+        self.y = KANCouplingNet(
+            self.split_len1 + self.imp,
+            self.split_len2,
+            identity_init=True,
+            verbose=True,
+        )
         # φ
-        self.f = subnet_constructor(self.split_len2, self.split_len1 + self.imp)
+        self.f = KANCouplingNet(
+            self.split_len2,
+            self.split_len1 + self.imp,
+            identity_init=True,
+            verbose=True,
+        )
         # ψ
-        self.p = subnet_constructor(self.split_len2, self.split_len1 + self.imp)
+        self.p = KANCouplingNet(
+            self.split_len2,
+            self.split_len1 + self.imp,
+            identity_init=True,
+            verbose=True,
+        )
 
     def e(self, s):
         return torch.exp(self.clamp * 2 * (torch.sigmoid(s) - 0.5))
