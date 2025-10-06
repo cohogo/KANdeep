@@ -57,6 +57,7 @@ class INV_block_affine(nn.Module):
             self.imp = 12
         else:
             self.imp = 0
+        chunk_size = getattr(c, "kan_chunk_size", 4096)
 
         # ρ
         self.r = KANCouplingNet(
@@ -64,6 +65,7 @@ class INV_block_affine(nn.Module):
             self.split_len2,
             identity_init=True,
             verbose=c.kan_verbose,
+            chunk_size=chunk_size,
         )
         # η
         self.y = KANCouplingNet(
@@ -71,6 +73,7 @@ class INV_block_affine(nn.Module):
             self.split_len2,
             identity_init=True,
             verbose=c.kan_verbose,
+            chunk_size=chunk_size,
         )
         # φ
         self.f = KANCouplingNet(
@@ -78,6 +81,7 @@ class INV_block_affine(nn.Module):
             self.split_len1 + self.imp,
             identity_init=True,
             verbose=c.kan_verbose,
+            chunk_size=chunk_size,
         )
         # ψ
         self.p = KANCouplingNet(
@@ -85,6 +89,7 @@ class INV_block_affine(nn.Module):
             self.split_len1 + self.imp,
             identity_init=True,
             verbose=c.kan_verbose,
+            chunk_size=chunk_size,
         )
 
     def e(self, s):

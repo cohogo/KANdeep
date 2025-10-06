@@ -31,7 +31,7 @@ optim_step_2 = True
 optim_step_3 = True
 
 # Train:
-batch_size = 24
+batch_size =24
 cropsize = 128
 betas = (0.5, 0.999)
 weight_step = 200
@@ -65,7 +65,11 @@ silent = False
 kan_verbose = False
 live_visualization = False
 progress_bar = False
-
+# Set ``kan_chunk_size`` to balance memory consumption with a tiny amount of
+# extra Python looping overhead.  Larger chunks give slightly better
+# throughput, while ``None`` disables chunking entirely for maximal speed on
+# GPUs with ample memory.
+kan_chunk_size = 4096
 # Saving checkpoints:
 MODEL_PATH = '/root/autodl-fs/DeepMIH_main/model'
 checkpoint_on_error = True
