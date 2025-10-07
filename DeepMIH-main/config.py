@@ -36,7 +36,10 @@ cropsize = 128
 betas = (0.5, 0.999)
 weight_step = 200
 gamma = 0.98
-
+dataloader_num_workers = 2
+dataloader_eval_workers = 1
+grad_accum_steps = 1
+use_amp = False
 # Val:
 cropsize_val_coco = 256
 cropsize_val_imagenet = 256
@@ -95,7 +98,7 @@ tain_next = False
 
 trained_epoch = 3000
 
-pretrain = True
+pretrain = False
 # 主模型加载路径
 PRETRAIN_PATH = r'/root/autodl-fs/DeepMIH_main/model/'
 suffix_pretrain = 'model_checkpoint_03000'

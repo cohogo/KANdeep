@@ -1,126 +1,126 @@
-from math import exp
+import sys
+import glob
+from os.path import join
+import numpy as np
+import os
+from PIL import Image, ImageEnhance
 import torch
-import torch.nn as nn
-from denseblock import Dense
-import config as c
-from kan_layers import KANCouplingNet
+from torch.utils.data import Dataset, DataLoader, TensorDataset
+import torchvision.transforms as T
+import importlib
+config_module = os.environ.get("DEEPMIH_CONFIG", "config")
+c = importlib.import_module(config_module)
+from natsort import natsorted
 
-class INV_block_addition(nn.Module):
-    def __init__(self, subnet_constructor=Dense, clamp=c.clamp, harr=True, in_1=3, in_2=3):
-        super().__init__()
-
-        if harr:
-            self.split_len1 = in_1 * 4
-            self.split_len2 = in_2 * 4
-        self.clamp = clamp
-
-        # ρ
-        # self.r = subnet_constructor(self.split_len1, self.split_len2)
-        # η
-        self.y = subnet_constructor(self.split_len1, self.split_len2)
-        # self.s2 = subnet_constructor(self.split_len2, self.split_len1)
-        # φ
-        self.f = subnet_constructor(self.split_len2, self.split_len1)
-
-    def e(self, s):
-        return torch.exp(self.clamp * 2 * (torch.sigmoid(s) - 0.5))
-
-    def forward(self, x, rev=False):
-        x1, x2 = (x.narrow(1, 0, self.split_len1),
-                  x.narrow(1, self.split_len1, self.split_len2))
-
-        if not rev:
-
-            t2 = self.f(x2)
-            y1 = x1 + t2
-            t1 = self.y(y1)
-            y2 = x2 + t1
-
-        else:  # names of x and y are swapped!
-
-            t1 = self.y(x1)
-            y2 = (x2 - t1)
-            t2 = self.f(y2)
-            y1 = (x1 - t2)
-
-        return torch.cat((y1, y2), 1)
-
-
-class INV_block_affine(nn.Module):
-    def __init__(self, subnet_constructor=Dense, clamp=c.clamp, harr=True, in_1=3, in_2=3, imp_map=True):
-        super().__init__()
-        if harr:
-            self.split_len1 = in_1 * 4
-            self.split_len2 = in_2 * 4
-        self.clamp = clamp
-        if imp_map:
-            self.imp = 12
-        else:
-            self.imp = 0
-        chunk_size = getattr(c, "kan_chunk_size", 4096)
-        identity_init = getattr(c, "kan_identity_init", True)
-        identity_jitter = getattr(c, "kan_identity_jitter", 1e-3)
-
-
-        # ρ
-        self.r = KANCouplingNet(
-            self.split_len1 + self.imp,
-            self.split_len2,
-            identity_init=identity_init,
-            identity_jitter=identity_jitter,
-            verbose=c.kan_verbose,
-            chunk_size=chunk_size,
+def _collect_files(path: str, pattern: str, mode: str):
+    if not os.path.isdir(path):
+        raise FileNotFoundError(
+            f"Dataset path for {mode} does not exist: {path}. "
+            "Update config.py to point to the extracted images."
         )
-        # η
-        self.y = KANCouplingNet(
-            self.split_len1 + self.imp,
-            self.split_len2,
-            identity_init=identity_init,
-            identity_jitter=identity_jitter,
-            verbose=c.kan_verbose,
-            chunk_size=chunk_size,
+    files = natsorted(sorted(glob.glob(join(path, f"*.{pattern}"))))
+    if not files:
+        raise RuntimeError(
+            f"Dataset path for {mode} is empty: {path}. "
+            "Ensure the directory contains *.{pattern} images."
         )
-        # φ
-        self.f = KANCouplingNet(
-            self.split_len2,
-            self.split_len1 + self.imp,
-            identity_init=identity_init,
-            identity_jitter=identity_jitter,
-            verbose=c.kan_verbose,
-            chunk_size=chunk_size,
-        )
-        # ψ
-        self.p = KANCouplingNet(
-            self.split_len2,
-            self.split_len1 + self.imp,
-            identity_init=identity_init,
-            identity_jitter=identity_jitter,
-            verbose=c.kan_verbose,
-            chunk_size=chunk_size,
-        )
+    return files
 
-    def e(self, s):
-        return torch.exp(self.clamp * 2 * (torch.sigmoid(s) - 0.5))
+def to_rgb(image):
+    rgb_image = Image.new("RGB", image.size)
+    rgb_image.paste(image)
+    return rgb_image
 
-    def forward(self, x, rev=False):
 
-        x1, x2 = (x.narrow(1, 0, self.split_len1 + self.imp),
-                  x.narrow(1, self.split_len1 + self.imp, self.split_len2))
+class Hinet_Dataset(Dataset):
+    def __init__(self, transforms_=None, mode="train"):
 
-        if not rev:
+        self.transform = transforms_
+        self.mode = mode
+        if self.mode == "train":
+            # TRAIN SETTING
+            if c.Dataset_mode == 'DIV2K':
+                self.TRAIN_PATH = c.TRAIN_PATH_DIV2K
+                self.format_train = 'png'
+                print('TRAIN DATASET is DIV2K')
 
-            t2 = self.f(x2)
-            s2 = self.p(x2)
-            y1 = self.e(s2) * x1 + t2
-            s1, t1 = self.r(y1), self.y(y1)
-            y2 = self.e(s1) * x2 + t1
+            if c.Dataset_mode == 'COCO':
+                self.TRAIN_PATH = c.TEST_PATH_COCO
+                self.format_train = 'jpg'
+                print('TRAIN DATASET is COCO')
 
-        else:  # names of x and y are swapped!
+            # train
+            self.files = natsorted(sorted(glob.glob(self.TRAIN_PATH + "/*." + self.format_train)))
 
-            s1, t1 = self.r(x1), self.y(x1)
-            y2 = (x2 - t1) / self.e(s1)
-            t2 = self.f(y2)
-            s2 = self.p(y2)
-            y1 = (x1 - t2) / self.e(s2)
+        if self.mode == "val":
+            # VAL SETTING
+            if c.Dataset_VAL_mode == 'DIV2K':
+                self.VAL_PATH = c.VAL_PATH_DIV2K
+                self.format_val = 'png'
+                print('VAL DATASET is DIV2K')
 
-        return torch.cat((y1, y2), 1)
+            if c.Dataset_VAL_mode == 'COCO':
+                self.VAL_PATH = c.VAL_PATH_COCO
+                self.format_val = 'jpg'
+                print('VAL DATASET is COCO')
+
+            if c.Dataset_VAL_mode == 'ImageNet':
+                self.VAL_PATH = c.VAL_PATH_IMAGENET
+                self.format_val = 'JPEG'
+                print('VAL DATASET is ImageNet')
+
+            # test
+            self.files = sorted(glob.glob(self.VAL_PATH + "/*." + self.format_val))
+
+    def __getitem__(self, index):
+        try:
+                image = Image.open(self.files[index])
+                image = to_rgb(image)
+                item = self.transform(image)
+                return item
+
+        except:
+            return self.__getitem__(index + 1)
+
+    def __len__(self):
+        return len(self.files)
+
+
+if c.Dataset_VAL_mode == 'DIV2K':
+    cropsize_val = c.cropsize_val_div2k
+if c.Dataset_VAL_mode == 'COCO':
+    cropsize_val = c.cropsize_val_coco
+if c.Dataset_VAL_mode == 'ImageNet':
+    cropsize_val = c.cropsize_val_imagenet
+
+transform = T.Compose([
+    T.RandomHorizontalFlip(),
+    T.RandomVerticalFlip(),
+    T.RandomCrop(c.cropsize),
+    T.ToTensor()
+])
+
+transform_val = T.Compose([
+    T.CenterCrop(cropsize_val),
+    T.ToTensor(),
+])
+
+
+# Training data loader
+trainloader = DataLoader(
+    Hinet_Dataset(transforms_=transform, mode="train"),
+    batch_size=c.batch_size,
+    shuffle=True,
+    pin_memory=False,
+    num_workers=1,
+    drop_last=True
+)
+# Test data loader
+testloader = DataLoader(
+    Hinet_Dataset(transforms_=transform_val, mode="val"),
+    batch_size=c.batchsize_val,
+    shuffle=False,
+    pin_memory=False,
+    num_workers=1,
+    drop_last=True
+)
