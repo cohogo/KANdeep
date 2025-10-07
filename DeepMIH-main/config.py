@@ -72,6 +72,14 @@ progress_bar = False
 # extra Python looping overhead.  Larger chunks give slightly better
 # throughput, while ``None`` disables chunking entirely for maximal speed on
 # GPUs with ample memory.
+# KAN memory/expressivity trade-offs
+kan_hidden_dims = (32,)
+# Stage 1 keeps CNN-based subnetworks by default to save VRAM
+kan_stage1_use_scale_nets = False
+kan_stage1_use_translation_nets = False
+# Stage 2 uses KAN for the scale networks but keeps translations as CNNs
+kan_stage2_use_scale_nets = True
+kan_stage2_use_translation_nets = False
 kan_chunk_size = 4096
 # RRDB
 # Saving checkpoints:

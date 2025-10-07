@@ -60,44 +60,37 @@ class INV_block_affine(nn.Module):
         chunk_size = getattr(c, "kan_chunk_size", 4096)
         identity_init = getattr(c, "kan_identity_init", True)
         identity_jitter = getattr(c, "kan_identity_jitter", 1e-3)
+        kan_hidden_dims = getattr(c, "kan_hidden_dims", None)
 
+        def make_kan(in_channels, out_channels):
+            return KANCouplingNet(
+                in_channels,
+                out_channels,
+                hidden_dims=kan_hidden_dims,
+                identity_init=identity_init,
+                identity_jitter=identity_jitter,
+                verbose=c.kan_verbose,
+                chunk_size=chunk_size,
+            )
+
+        if imp_map:
+            use_scale_kan = getattr(c, "kan_stage2_use_scale_nets", True)
+            use_translate_kan = getattr(c, "kan_stage2_use_translation_nets", False)
+        else:
+            use_scale_kan = getattr(c, "kan_stage1_use_scale_nets", False)
+            use_translate_kan = getattr(c, "kan_stage1_use_translation_nets", False)
+
+        scale_constructor = make_kan if use_scale_kan else subnet_constructor
+        translate_constructor = make_kan if use_translate_kan else subnet_constructor
 
         # ρ
-        self.r = KANCouplingNet(
-            self.split_len1 + self.imp,
-            self.split_len2,
-            identity_init=identity_init,
-            identity_jitter=identity_jitter,
-            verbose=c.kan_verbose,
-            chunk_size=chunk_size,
-        )
+        self.r = scale_constructor(self.split_len1 + self.imp, self.split_len2)
         # η
-        self.y = KANCouplingNet(
-            self.split_len1 + self.imp,
-            self.split_len2,
-            identity_init=identity_init,
-            identity_jitter=identity_jitter,
-            verbose=c.kan_verbose,
-            chunk_size=chunk_size,
-        )
+        self.y = translate_constructor(self.split_len1 + self.imp, self.split_len2)
         # φ
-        self.f = KANCouplingNet(
-            self.split_len2,
-            self.split_len1 + self.imp,
-            identity_init=identity_init,
-            identity_jitter=identity_jitter,
-            verbose=c.kan_verbose,
-            chunk_size=chunk_size,
-        )
+        self.f = translate_constructor(self.split_len2, self.split_len1 + self.imp)
         # ψ
-        self.p = KANCouplingNet(
-            self.split_len2,
-            self.split_len1 + self.imp,
-            identity_init=identity_init,
-            identity_jitter=identity_jitter,
-            verbose=c.kan_verbose,
-            chunk_size=chunk_size,
-        )
+        self.p = scale_constructor(self.split_len2, self.split_len1 + self.imp)
 
     def e(self, s):
         return torch.exp(self.clamp * 2 * (torch.sigmoid(s) - 0.5))
