@@ -28,10 +28,12 @@ class KANCouplingNet(nn.Module):
         symbolic_enabled: bool = False,
         enable_speed: bool = True,
         identity_init: bool = False,
+        identity_jitter: float = 1e-3,
         auto_save: bool = False,
         ckpt_path: Optional[str] = None,
         verbose: bool = False,
         seed: Optional[int] = 42,
+        chunk_size: Optional[int] = None,
     ) -> None:
         super().__init__()
 
@@ -57,6 +59,7 @@ class KANCouplingNet(nn.Module):
         self.kan = KAN(**kan_kwargs)
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.chunk_size = chunk_size
 
         if enable_speed:
             if hasattr(self.kan, "speed"):
@@ -67,11 +70,12 @@ class KANCouplingNet(nn.Module):
                 self.kan.enable_speed()
 
         if identity_init:
+            jitter = float(identity_jitter)
             with torch.no_grad():
                 for parameter in self.kan.parameters():
                     parameter.zero_()
-                    if parameter.dim() > 1:
-                        parameter.add_(0.001 * torch.randn_like(parameter))
+                    if parameter.dim() > 1 and jitter > 0.0:
+                        parameter.add_(jitter * torch.randn_like(parameter))
 
         if verbose:
             print(
@@ -102,7 +106,13 @@ class KANCouplingNet(nn.Module):
             )
 
         flattened = x.movedim(1, -1).reshape(-1, channels).contiguous()
-        transformed = self.kan(flattened)
+        if self.chunk_size is None or flattened.size(0) <= self.chunk_size:
+            transformed = self.kan(flattened)
+        else:
+            chunks = []
+            for chunk in flattened.split(self.chunk_size, dim=0):
+                chunks.append(self.kan(chunk))
+            transformed = torch.cat(chunks, dim=0)
         if transformed.shape[-1] != self.out_channels:
             raise RuntimeError(
                 "KAN output shape mismatch: expected last dim "

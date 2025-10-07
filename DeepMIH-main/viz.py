@@ -34,6 +34,20 @@ class Visualizer:
             print(self.config_str)
             print(header)
 
+    def _format_value(self, value):
+        """Pretty-print a loss scalar without hiding very small magnitudes."""
+
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+
+        if numeric == 0.0:
+            return "0.0000"
+        if abs(numeric) < 1e-4:
+            return f"{numeric:.4e}"
+        return f"{numeric:.4f}"
+
     def update_losses(self, losses, *args):
         print('\r', '    '*20, end='')
         line = '\r%.3i' % (self.counter)
@@ -41,7 +55,7 @@ class Visualizer:
             line += '\t\t%.4f' % (l)
 
         print(line)
-        self.counter += 1
+        line += '\t\t%s' % (self._format_value(l))
 
     def update_images(self, *img_list):
         w = img_list[0].shape[2]

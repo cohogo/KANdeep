@@ -15,6 +15,7 @@ from imp_subnet import *
 import torchvision.transforms as T
 import config as c
 import importlib
+
 config_module = os.environ.get("DEEPMIH_CONFIG", "config")
 c = importlib.import_module(config_module)
 from tensorboardX import SummaryWriter
@@ -25,6 +26,7 @@ import modules.Unet_common as common
 import warnings
 from vgg_loss import VGGLoss
 from torch.nn.utils import clip_grad_norm_
+
 warnings.filterwarnings("ignore")
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -90,6 +92,56 @@ def get_parameter_number(net):
     trainable_num = sum(p.numel() for p in net.parameters() if p.requires_grad)
     return {'Total': total_num, 'Trainable': trainable_num}
 
+
+def _grad_norm(module):
+    """Compute the global L2 norm of all gradients in a module."""
+
+    total = 0.0
+    for param in module.parameters():
+        grad = param.grad
+        if grad is not None:
+            total += grad.detach().float().pow(2).sum().item()
+
+    if total == 0.0:
+        return 0.0
+
+    return math.sqrt(total)
+
+
+_IDENTITY_INIT_MESSAGE_EMITTED = False
+_IDENTITY_LOSS_WARNING_EMITTED = False
+
+
+def _print_identity_init_message():
+    global _IDENTITY_INIT_MESSAGE_EMITTED
+    if _IDENTITY_INIT_MESSAGE_EMITTED:
+        return
+    if getattr(c, "kan_identity_init", True):
+        jitter = getattr(c, "kan_identity_jitter", 1e-3)
+        print(
+            "[InitDebug] KAN coupling blocks start from a near-identity mapping "
+            "(kan_identity_init=True). Early guide/reconstruction losses will "
+            "be close to zero; set config.kan_identity_init=False or increase "
+            f"config.kan_identity_jitter (currently {jitter}) to randomize the start."
+        )
+        _IDENTITY_INIT_MESSAGE_EMITTED = True
+
+
+def _explain_identity_loss(i_epoch):
+    global _IDENTITY_LOSS_WARNING_EMITTED
+    if _IDENTITY_LOSS_WARNING_EMITTED:
+        return
+    if getattr(c, "kan_identity_init", True):
+        jitter = getattr(c, "kan_identity_jitter", 1e-3)
+        print(
+            f"[LossDebug] Epoch {i_epoch}: near-zero losses are expected because "
+            "KAN coupling layers were initialized to the identity. Disable "
+            "kan_identity_init or raise kan_identity_jitter to provide a larger "
+            f"initial perturbation (currently {jitter})."
+        )
+        _IDENTITY_LOSS_WARNING_EMITTED = True
+
+
 def _summarize_skipped_weights(skipped, filtered_count):
     """Print a human-readable explanation for skipped checkpoint weights."""
 
@@ -136,6 +188,7 @@ def _summarize_skipped_weights(skipped, filtered_count):
             "the configured substrings {getattr(c, 'pretrained_skip_substrings', tuple())}."
         )
 
+
 def load(name, net, optim, skip_substrings=None):
     state_dicts = torch.load(name, map_location=device)
     pretrained_state = state_dicts.get('net', {})
@@ -163,11 +216,55 @@ def load(name, net, optim, skip_substrings=None):
     if load_result.unexpected_keys:
         print(f"Warning: {len(load_result.unexpected_keys)} unexpected parameters ignored from checkpoint")
     _summarize_skipped_weights(skipped_mismatch, filtered_matches)
+    optimizer_status = None
     if 'opt' in state_dicts:
         try:
             optim.load_state_dict(state_dicts['opt'])
+            optimizer_status = True
         except Exception as exc:
             print(f'Cannot load optimizer for some reason or other: {exc}')
+            ptimizer_status = False
+    return {
+        'loaded': len(filtered_state),
+        'skipped_mismatch': len(skipped_mismatch),
+        'filtered_matches': filtered_matches,
+        'missing': len(load_result.missing_keys),
+        'unexpected': len(load_result.unexpected_keys),
+        'optimizer_status': optimizer_status,
+    }
+
+
+def _log_checkpoint_status(label, report):
+    if not report:
+        return
+    skipped = report.get('skipped_mismatch', 0)
+    missing = report.get('missing', 0)
+    filtered_matches = report.get('filtered_matches', 0)
+    if skipped or missing:
+        print(
+            f"[CheckpointDebug] {label}: {skipped} mismatched parameters were "
+            "skipped and {missing} parameters remain randomly initialized. "
+            "This happens when loading checkpoints from a different architecture "
+            "(e.g., convolutional vs. KAN coupling blocks). Disable pretraining "
+            "or provide matching weights to avoid starting from scratch."
+        )
+    if filtered_matches:
+        print(
+            f"[CheckpointDebug] {label}: {filtered_matches} parameters were "
+            "ignored because they matched pretrained_skip_substrings."
+        )
+    optimizer_status = report.get('optimizer_status')
+    if optimizer_status is False:
+        print(
+            f"[CheckpointDebug] {label}: optimizer state could not be restored; "
+            "training will continue with a freshly initialized optimizer."
+        )
+    elif optimizer_status is None:
+        print(
+            f"[CheckpointDebug] {label}: checkpoint did not contain optimizer "
+            "state; gradients will build momentum from scratch."
+        )
+
 
 def init_net3(mod):
     for key, param in mod.named_parameters():
@@ -208,17 +305,37 @@ weight_scheduler3 = torch.optim.lr_scheduler.StepLR(optim3, c.weight_step, gamma
 
 dwt = common.DWT()
 iwt = common.IWT()
-
+checkpoint_reports = []
 if c.tain_next:
-    load(c.MODEL_PATH + c.suffix_load + '_1.pt', net1, optim1)
-    load(c.MODEL_PATH + c.suffix_load + '_2.pt', net2, optim2)
-    load(c.MODEL_PATH + c.suffix_load + '_3.pt', net3, optim3)
+    checkpoint_reports.append(
+        ("resume/net1", load(c.MODEL_PATH + c.suffix_load + '_1.pt', net1, optim1))
+    )
+    checkpoint_reports.append(
+        ("resume/net2", load(c.MODEL_PATH + c.suffix_load + '_2.pt', net2, optim2))
+    )
+    checkpoint_reports.append(
+        ("resume/net3", load(c.MODEL_PATH + c.suffix_load + '_3.pt', net3, optim3))
+    )
 
 if c.pretrain:
-    load(c.PRETRAIN_PATH + c.suffix_pretrain + '_1.pt', net1, optim1)
-    load(c.PRETRAIN_PATH + c.suffix_pretrain + '_2.pt', net2, optim2)
+    checkpoint_reports.append(
+        ("pretrain/net1", load(c.PRETRAIN_PATH + c.suffix_pretrain + '_1.pt', net1, optim1))
+    )
+    checkpoint_reports.append(
+        ("pretrain/net2", load(c.PRETRAIN_PATH + c.suffix_pretrain + '_2.pt', net2, optim2))
+    )
     if c.PRETRAIN_PATH_3 is not None:
-        load(c.PRETRAIN_PATH_3 + c.suffix_pretrain_3 + '_3.pt', net3, optim3)
+        checkpoint_reports.append(
+            (
+                "pretrain/net3",
+                load(c.PRETRAIN_PATH_3 + c.suffix_pretrain_3 + '_3.pt', net3, optim3),
+            )
+        )
+
+for label, report in checkpoint_reports:
+    _log_checkpoint_status(label, report)
+
+_print_identity_init_message()
 
 try:
     writer = SummaryWriter(comment='hinet', filename_suffix="steg")
@@ -231,6 +348,9 @@ try:
         loss_history_r1 = []
         loss_history_r2 = []
         loss_history_imp = []
+        grad_norm_history_1 = []
+        grad_norm_history_2 = []
+        grad_norm_history_3 = []
         #################
         #     train:    #
         #################
@@ -278,7 +398,8 @@ try:
             output_dwt_2 = net2(input_dwt_2)  # channels = 36
             output_steg_dwt_2 = output_dwt_2.narrow(1, 0, 4 * c.channels_in)  # channels = 12
             output_steg_dwt_low_2 = output_steg_dwt_2.narrow(1, 0, c.channels_in)  # channels = 3
-            output_z_dwt_2 = output_dwt_2.narrow(1, 4 * c.channels_in, output_dwt_2.shape[1] - 4 * c.channels_in)  # channels = 24
+            output_z_dwt_2 = output_dwt_2.narrow(1, 4 * c.channels_in,
+                                                 output_dwt_2.shape[1] - 4 * c.channels_in)  # channels = 24
 
             # get steg2
             output_steg_2 = iwt(output_steg_dwt_2)  # channels = 3
@@ -295,7 +416,8 @@ try:
             rev_dwt_2 = net2(output_rev_dwt_2, rev=True)  # channels = 36
 
             rev_steg_dwt_1 = rev_dwt_2.narrow(1, 0, 4 * c.channels_in)  # channels = 12
-            rev_secret_dwt_2 = rev_dwt_2.narrow(1, rev_dwt_2.shape[1] - 4 * c.channels_in, 4 * c.channels_in)  # channels = 12
+            rev_secret_dwt_2 = rev_dwt_2.narrow(1, rev_dwt_2.shape[1] - 4 * c.channels_in,
+                                                4 * c.channels_in)  # channels = 12
 
             rev_steg_1 = iwt(rev_steg_dwt_1)  # channels = 3
             rev_secret_2 = iwt(rev_secret_dwt_2)  # channels = 3
@@ -307,7 +429,8 @@ try:
 
             rev_dwt_1 = net1(output_rev_dwt_1, rev=True)  # channels = 36
 
-            rev_secret_dwt = rev_dwt_1.narrow(1, rev_dwt_1.shape[1] - 4 * c.channels_in, 4 * c.channels_in)  # channels = 12
+            rev_secret_dwt = rev_dwt_1.narrow(1, rev_dwt_1.shape[1] - 4 * c.channels_in,
+                                              4 * c.channels_in)  # channels = 12
             rev_secret_1 = iwt(rev_secret_dwt)
 
             #################
@@ -327,7 +450,7 @@ try:
             r_loss_1 = reconstruction_loss(rev_secret_1, secret_1)
             r_loss_2 = reconstruction_loss(rev_secret_2, secret_2)
 
-            total_loss = c.lamda_reconstruction_1 * r_loss_1 + c.lamda_reconstruction_2 * r_loss_2 + c.lamda_guide_1 * g_loss_1\
+            total_loss = c.lamda_reconstruction_1 * r_loss_1 + c.lamda_reconstruction_2 * r_loss_2 + c.lamda_guide_1 * g_loss_1 \
                          + c.lamda_guide_2 * g_loss_2 + c.lamda_low_frequency_1 * l_loss_1 + c.lamda_low_frequency_2 * l_loss_2
             total_loss = total_loss + 0.01 * perc_loss
             total_loss.backward()
@@ -335,6 +458,9 @@ try:
                 clip_grad_norm_(net1.parameters(), c.grad_clip_norm)
                 clip_grad_norm_(net2.parameters(), c.grad_clip_norm)
                 clip_grad_norm_(net3.parameters(), c.grad_clip_norm)
+            grad_norm_history_1.append(_grad_norm(net1))
+            grad_norm_history_2.append(_grad_norm(net2))
+            grad_norm_history_3.append(_grad_norm(net3))
             if c.optim_step_1:
                 optim1.step()
 
@@ -403,7 +529,8 @@ try:
 
                     output_dwt_2 = net2(input_dwt_2)  # channels = 36
                     output_steg_dwt_2 = output_dwt_2.narrow(1, 0, 4 * c.channels_in)  # channels = 12
-                    output_z_dwt_2 = output_dwt_2.narrow(1, 4 * c.channels_in, output_dwt_2.shape[1] - 4 * c.channels_in)  # channels = 24
+                    output_z_dwt_2 = output_dwt_2.narrow(1, 4 * c.channels_in,
+                                                         output_dwt_2.shape[1] - 4 * c.channels_in)  # channels = 24
 
                     # get steg2
                     output_steg_2 = iwt(output_steg_dwt_2)  # channels = 3
@@ -420,7 +547,8 @@ try:
                     rev_dwt_2 = net2(output_rev_dwt_2, rev=True)  # channels = 36
 
                     rev_steg_dwt_1 = rev_dwt_2.narrow(1, 0, 4 * c.channels_in)  # channels = 12
-                    rev_secret_dwt_2 = rev_dwt_2.narrow(1, output_dwt_2.shape[1] - 4 * c.channels_in, 4 * c.channels_in)  # channels = 12
+                    rev_secret_dwt_2 = rev_dwt_2.narrow(1, output_dwt_2.shape[1] - 4 * c.channels_in,
+                                                        4 * c.channels_in)  # channels = 12
 
                     rev_steg_1 = iwt(rev_steg_dwt_1)  # channels = 3
                     rev_secret_2 = iwt(rev_secret_dwt_2)  # channels = 3
@@ -432,7 +560,8 @@ try:
 
                     rev_dwt_1 = net1(output_rev_dwt_1, rev=True)  # channels = 24
 
-                    rev_secret_dwt = rev_dwt_1.narrow(1, rev_dwt_1.shape[1] - 4 * c.channels_in, 4 * c.channels_in)  # channels = 12
+                    rev_secret_dwt = rev_dwt_1.narrow(1, rev_dwt_1.shape[1] - 4 * c.channels_in,
+                                                      4 * c.channels_in)  # channels = 12
                     rev_secret_1 = iwt(rev_secret_dwt)
 
                     secret_rev1_255 = rev_secret_1.cpu().numpy().squeeze() * 255
@@ -470,6 +599,13 @@ try:
                 writer.add_scalars("PSNR", {"S2 average psnr": np.mean(psnr_s2)}, i_epoch)
                 writer.add_scalars("PSNR", {"C2 average psnr": np.mean(psnr_c2)}, i_epoch)
 
+        if not loss_history:
+            print(
+                f"[LossDebug] Epoch {i_epoch}: no training batches were processed. "
+                "Check that the training dataset paths are correct and contain images."
+            )
+            viz.show_loss(np.array([0.0, np.log10(optim1.param_groups[0]['lr'])]))
+            continue
 
         epoch_losses = np.mean(np.array(loss_history), axis=0)
         epoch_losses[1] = np.log10(optim1.param_groups[0]['lr'])
@@ -479,6 +615,44 @@ try:
         epoch_losses_r1 = np.mean(np.array(loss_history_r1))
         epoch_losses_r2 = np.mean(np.array(loss_history_r2))
         epoch_losses_imp = np.mean(np.array(loss_history_imp))
+        epoch_grad_norm_1 = np.mean(np.array(grad_norm_history_1)) if grad_norm_history_1 else 0.0
+        epoch_grad_norm_2 = np.mean(np.array(grad_norm_history_2)) if grad_norm_history_2 else 0.0
+        epoch_grad_norm_3 = np.mean(np.array(grad_norm_history_3)) if grad_norm_history_3 else 0.0
+
+        if loss_history:
+            total_values = [entry[0] for entry in loss_history]
+            mean_total = float(np.mean(total_values))
+            if mean_total < 1e-4:
+                min_total = float(np.min(total_values))
+                max_total = float(np.max(total_values))
+                print(
+                    f"[LossDebug] Epoch {i_epoch}: total loss nearly zero "
+                    f"(mean={mean_total:.6e}, min={min_total:.6e}, max={max_total:.6e})."
+                )
+                print(
+                    "[LossDebug] Component means: "
+                    f"g1={epoch_losses_g1:.6e}, g2={epoch_losses_g2:.6e}, "
+                    f"r1={epoch_losses_r1:.6e}, r2={epoch_losses_r2:.6e}, imp={epoch_losses_imp:.6e}."
+                )
+                print(
+                    "[LossDebug] Gradient norms (avg L2): "
+                    f"net1={epoch_grad_norm_1:.6e}, "
+                    f"net2={epoch_grad_norm_2:.6e}, net3={epoch_grad_norm_3:.6e}."
+                )
+                _explain_identity_loss(i_epoch)
+                if c.pretrain or c.tain_next:
+                    print(
+                        "[LossDebug] A pre-trained checkpoint is loaded; near-zero losses "
+                        "are expected when continuing from a converged model."
+                    )
+                else:
+                    print(
+                        "[LossDebug] Pretraining is disabled. If the gradient norms above "
+                        "stay near zero, the model may not be updating. Verify that "
+                        "optim_step_* flags are enabled and that the data loader is "
+                        "returning diverse images."
+                    )
+
         viz.show_loss(epoch_losses)
         writer.add_scalars("Train", {"Train_Loss": epoch_losses[0]}, i_epoch)
         writer.add_scalars("Train", {"g1_Loss": epoch_losses_g1}, i_epoch)

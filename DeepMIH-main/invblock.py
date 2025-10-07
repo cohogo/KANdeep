@@ -58,12 +58,16 @@ class INV_block_affine(nn.Module):
         else:
             self.imp = 0
         chunk_size = getattr(c, "kan_chunk_size", 4096)
+        identity_init = getattr(c, "kan_identity_init", True)
+        identity_jitter = getattr(c, "kan_identity_jitter", 1e-3)
+
 
         # ρ
         self.r = KANCouplingNet(
             self.split_len1 + self.imp,
             self.split_len2,
-            identity_init=True,
+            identity_init=identity_init,
+            identity_jitter=identity_jitter,
             verbose=c.kan_verbose,
             chunk_size=chunk_size,
         )
@@ -71,7 +75,8 @@ class INV_block_affine(nn.Module):
         self.y = KANCouplingNet(
             self.split_len1 + self.imp,
             self.split_len2,
-            identity_init=True,
+            identity_init=identity_init,
+            identity_jitter=identity_jitter,
             verbose=c.kan_verbose,
             chunk_size=chunk_size,
         )
@@ -79,7 +84,8 @@ class INV_block_affine(nn.Module):
         self.f = KANCouplingNet(
             self.split_len2,
             self.split_len1 + self.imp,
-            identity_init=True,
+            identity_init=identity_init,
+            identity_jitter=identity_jitter,
             verbose=c.kan_verbose,
             chunk_size=chunk_size,
         )
@@ -87,7 +93,8 @@ class INV_block_affine(nn.Module):
         self.p = KANCouplingNet(
             self.split_len2,
             self.split_len1 + self.imp,
-            identity_init=True,
+            identity_init=identity_init,
+            identity_jitter=identity_jitter,
             verbose=c.kan_verbose,
             chunk_size=chunk_size,
         )
