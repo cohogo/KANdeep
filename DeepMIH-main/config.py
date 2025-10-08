@@ -34,7 +34,9 @@ cropsize = 128
 betas = (0.5, 0.999)
 weight_step = 200
 gamma = 0.98
-
+# KAN fine-tuning controls
+kan_lr_scale = 0.2
+kan_freeze_epochs = 3
 # Val:
 cropsize_val_coco = 256
 cropsize_val_imagenet = 256

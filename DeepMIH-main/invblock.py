@@ -2,6 +2,7 @@ from math import exp
 import torch
 import torch.nn as nn
 from denseblock import Dense
+from kan_adapter import LoKiKANAdapter
 import config as c
 
 
@@ -57,15 +58,29 @@ class INV_block_affine(nn.Module):
             self.imp = 12
         else:
             self.imp = 0
+        if imp_map:
+            scale_constructor = lambda in_ch, out_ch: LoKiKANAdapter(
+                in_ch,
+                out_ch,
+                bottleneck_ratio=1.0 / 16.0,
+                hidden_features=32,
+                grid_size=4,
+                order=3,
+                normalize_input=True,
+                activation_dropout=0.0,
+                use_layer_norm=True,
+            )
+        else:
+            scale_constructor = subnet_constructor
 
         # ρ
-        self.r = subnet_constructor(self.split_len1 + self.imp, self.split_len2)
+        self.r = scale_constructor(self.split_len1 + self.imp, self.split_len2)
         # η
         self.y = subnet_constructor(self.split_len1 + self.imp, self.split_len2)
         # φ
         self.f = subnet_constructor(self.split_len2, self.split_len1 + self.imp)
         # ψ
-        self.p = subnet_constructor(self.split_len2, self.split_len1 + self.imp)
+        self.p = scale_constructor(self.split_len2, self.split_len1 + self.imp)
 
     def e(self, s):
         return torch.exp(self.clamp * 2 * (torch.sigmoid(s) - 0.5))

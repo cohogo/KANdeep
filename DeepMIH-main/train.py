@@ -20,6 +20,7 @@ import modules.module_util as mutil
 import modules.Unet_common as common
 import warnings
 from vgg_loss import VGGLoss
+from kan_adapter import KANLayer, LoKiKANAdapter
 warnings.filterwarnings("ignore")
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -84,7 +85,33 @@ def get_parameter_number(net):
     total_num = sum(p.numel() for p in net.parameters())
     trainable_num = sum(p.numel() for p in net.parameters() if p.requires_grad)
     return {'Total': total_num, 'Trainable': trainable_num}
+def _collect_kan_param_groups(model):
+    kan_module_types = (KANLayer, LoKiKANAdapter)
+    kan_param_ids = set()
+    for module in model.modules():
+        if isinstance(module, kan_module_types):
+            for param in module.parameters():
+                kan_param_ids.add(id(param))
 
+    other_params = []
+    kan_params = []
+    for param in model.parameters():
+        if not param.requires_grad:
+            continue
+        if id(param) in kan_param_ids:
+            kan_params.append(param)
+        else:
+            other_params.append(param)
+    return other_params, kan_params
+
+
+def _set_kan_trainable(model, requires_grad):
+    for module in model.modules():
+        if isinstance(module, (KANLayer, LoKiKANAdapter)):
+            for param in module.parameters():
+                param.requires_grad = requires_grad
+                if not requires_grad:
+                    param.grad = None
 
 def load(name, net, optim):
     state_dicts = torch.load(name)
@@ -124,10 +151,18 @@ print(para1)
 print(para2)
 print(para3)
 params_trainable1 = (list(filter(lambda p: p.requires_grad, net1.parameters())))
-params_trainable2 = (list(filter(lambda p: p.requires_grad, net2.parameters())))
+
 params_trainable3 = (list(filter(lambda p: p.requires_grad, net3.parameters())))
 optim1 = torch.optim.Adam(params_trainable1, lr=c.lr, betas=c.betas, eps=1e-6, weight_decay=c.weight_decay)
-optim2 = torch.optim.Adam(params_trainable2, lr=c.lr, betas=c.betas, eps=1e-6, weight_decay=c.weight_decay)
+base_params2, kan_params2 = _collect_kan_param_groups(net2)
+param_groups2 = []
+if base_params2:
+    param_groups2.append({"params": base_params2})
+if kan_params2:
+    param_groups2.append({"params": kan_params2, "lr": c.lr * c.kan_lr_scale})
+if not param_groups2:
+    raise RuntimeError("No trainable parameters found for stage-2 network.")
+optim2 = torch.optim.Adam(param_groups2, lr=c.lr, betas=c.betas, eps=1e-6, weight_decay=c.weight_decay)
 optim3 = torch.optim.Adam(params_trainable3, lr=c.lr3, betas=c.betas, eps=1e-6, weight_decay=c.weight_decay)
 weight_scheduler1 = torch.optim.lr_scheduler.StepLR(optim1, c.weight_step, gamma=c.gamma)
 weight_scheduler2 = torch.optim.lr_scheduler.StepLR(optim2, c.weight_step, gamma=c.gamma)
@@ -146,12 +181,19 @@ if c.pretrain:
     load(c.PRETRAIN_PATH + c.suffix_pretrain + '_2.pt', net2, optim2)
     if c.PRETRAIN_PATH_3 is not None:
         load(c.PRETRAIN_PATH_3 + c.suffix_pretrain_3 + '_3.pt', net3, optim3)
-
+kan_frozen = False
+if c.kan_freeze_epochs > 0 and kan_params2:
+    _set_kan_trainable(net2, False)
+    kan_frozen = True
 try:
     writer = SummaryWriter(comment='hinet', filename_suffix="steg")
 
-    for i_epoch in range(c.epochs):
-        i_epoch = i_epoch + c.trained_epoch + 1
+    for epoch_idx in range(c.epochs):
+        if kan_frozen and epoch_idx >= c.kan_freeze_epochs:
+            _set_kan_trainable(net2, True)
+            kan_frozen = False
+
+        i_epoch = epoch_idx + c.trained_epoch + 1
         loss_history = []
         loss_history_g1 = []
         loss_history_g2 = []
