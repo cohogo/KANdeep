@@ -21,4 +21,4 @@ batch_size = 12
 
 # Retain gradient clipping and checkpoint filtering behaviour from base config.
 grad_clip_norm = 1.0
-pretrained_skip_substrings = ("kan",)
+pretrained_skip_substrings = ("kan", "coupling")
