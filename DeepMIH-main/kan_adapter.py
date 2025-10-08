@@ -1,3 +1,20 @@
+"""LoKi-style KAN adapter blocks for DeepMIH coupling sub-networks.
+
+This module introduces two building blocks:
+
+* :class:`KANLayer` implements a lightweight Kolmogorov--Arnold layer where every edge
+  is parameterised by a learnable residual spline activation.  The formulation mirrors
+  the definition from the KAN paper but keeps the grid compact (small number of basis
+  functions) so that it can act as a drop-in replacement for the tiny MLPs used in the
+  coupling blocks.
+* :class:`LoKiKANAdapter` wraps two KAN layers between a linear bottleneck/expansion pair,
+  matching the LoKi adapter design that serves as a learnable activation while
+  controlling memory usage.
+
+The classes are self-contained and can be imported without altering existing training
+scripts.  A later step will swap the stage-2 scale subnetworks to use the adapter.
+"""
+
 from __future__ import annotations
 
 from typing import Optional
@@ -141,7 +158,7 @@ class KANLayer(nn.Module):
             support = ((x_expanded >= left) & (x_expanded < right)).to(x.dtype)
             if i == num_basis - 1:
                 support = torch.where(x_expanded == right, torch.ones_like(support), support)
-            basis.append(support)
+            basis.append(support.squeeze(-1))
         basis_tensor = torch.stack(basis, dim=-1)
 
         # Recursive Cox–de Boor formula to reach the requested order.
@@ -152,15 +169,15 @@ class KANLayer(nn.Module):
                 denom2 = knots[i + k + 1] - knots[i + 1]
 
                 if denom1 > 0:
-                    term1 = (x_expanded - knots[i]) / denom1 * basis_tensor[..., i]
+                    term1 = ((x - knots[i]) / denom1) * basis_tensor[..., i]
                 else:
-                    term1 = torch.zeros_like(x_expanded)
+                    term1 = torch.zeros_like(x)
 
                 if i + 1 < num_basis and denom2 > 0:
                     next_basis = basis_tensor[..., i + 1]
-                    term2 = (knots[i + k + 1] - x_expanded) / denom2 * next_basis
+                    term2 = ((knots[i + k + 1] - x) / denom2) * next_basis
                 else:
-                    term2 = torch.zeros_like(x_expanded)
+                    term2 = torch.zeros_like(x)
 
                 updated.append(term1 + term2)
             basis_tensor = torch.stack(updated, dim=-1)
@@ -177,12 +194,11 @@ class KANLayer(nn.Module):
         basis = self._bspline_basis(x_norm)
         silu_x = F.silu(x_norm)
 
-        base_vals = silu_x.unsqueeze(1) * self.base_weight.unsqueeze(0)
-        spline_vals = torch.einsum("bim,oim->boi", basis, self.spline_coeff)
-        spline_vals = spline_vals * self.spline_weight.unsqueeze(0)
+        base_output = torch.einsum("bi,oi->bo", silu_x, self.base_weight)
+        coeff_weighted = self.spline_coeff * self.spline_weight.unsqueeze(-1)
+        spline_output = torch.einsum("bim,oim->bo", basis, coeff_weighted)
 
-        edge_outputs = base_vals + spline_vals
-        out = edge_outputs.sum(dim=2) + self.bias.unsqueeze(0)
+        out = base_output + spline_output + self.bias.unsqueeze(0)
         out = out.view(*original_shape[:-1], self.out_features)
         return out
 

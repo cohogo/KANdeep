@@ -157,6 +157,7 @@ def _load_partial_state_dict(module, checkpoint_state, label="model"):
         print(f"    Unexpected keys from load: {_summarize_keys(load_info.unexpected_keys)}")
 
 
+
 def load(name, net, optim, allow_partial=False, label="model"):
     state_dicts = torch.load(name, map_location="cpu")
     network_state_dict = {k: v for k, v in state_dicts['net'].items() if 'tmp_var' not in k}
@@ -164,7 +165,7 @@ def load(name, net, optim, allow_partial=False, label="model"):
         _load_partial_state_dict(net, network_state_dict, label=label)
     else:
         net.load_state_dict(network_state_dict)
-    if 'opt' in state_dicts:
+    if 'opt' in state_dicts and not allow_partial:
         try:
             optim.load_state_dict(state_dicts['opt'])
         except Exception:
@@ -265,6 +266,8 @@ if c.pretrain:
             allow_partial=True,
             label='impmap-pretrain',
         )
+
+
 
 kan_frozen = False
 if c.kan_freeze_epochs > 0 and kan_params2:
