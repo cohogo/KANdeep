@@ -57,8 +57,8 @@ class Hinet_Dataset(Dataset):
         elif self.mode == "val":
             # VAL SETTING
             if c.Dataset_VAL_mode == 'DIV2K':
-                self.VAL_PATH = c.VAL_PATH_DIV2K
-                self.format_val = 'png'
+                path = c.VAL_PATH_DIV2K
+                pattern = 'png'
                 print('VAL DATASET is DIV2K')
 
             elif c.Dataset_VAL_mode == 'COCO':

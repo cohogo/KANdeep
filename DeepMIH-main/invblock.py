@@ -61,6 +61,8 @@ class INV_block_affine(nn.Module):
         identity_init = getattr(c, "kan_identity_init", True)
         identity_jitter = getattr(c, "kan_identity_jitter", 1e-3)
         kan_hidden_dims = getattr(c, "kan_hidden_dims", None)
+        normalize_input = getattr(c, "kan_normalize_input", False)
+        normalization_eps = getattr(c, "kan_normalization_eps", 1e-6)
 
         def make_kan(in_channels, out_channels):
             return KANCouplingNet(
@@ -71,6 +73,8 @@ class INV_block_affine(nn.Module):
                 identity_jitter=identity_jitter,
                 verbose=c.kan_verbose,
                 chunk_size=chunk_size,
+                normalize_input=normalize_input,
+                normalization_eps=normalization_eps,
             )
 
         if imp_map:

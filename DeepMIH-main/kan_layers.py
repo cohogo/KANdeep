@@ -34,6 +34,8 @@ class KANCouplingNet(nn.Module):
         verbose: bool = False,
         seed: Optional[int] = 42,
         chunk_size: Optional[int] = None,
+        normalize_input: bool = False,
+        normalization_eps: float = 1e-6,
     ) -> None:
         super().__init__()
 
@@ -60,7 +62,8 @@ class KANCouplingNet(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.chunk_size = chunk_size
-
+        self.normalize_input = bool(normalize_input)
+        self.normalization_eps = float(normalization_eps)
         if enable_speed:
             if hasattr(self.kan, "speed"):
                 # ``speed`` disables the symbolic branch for improved performance.
@@ -106,6 +109,11 @@ class KANCouplingNet(nn.Module):
             )
 
         flattened = x.movedim(1, -1).reshape(-1, channels).contiguous()
+        if self.normalize_input:
+            mean = flattened.mean(dim=-1, keepdim=True)
+            std = flattened.std(dim=-1, keepdim=True)
+            std = std.clamp_min(self.normalization_eps)
+            flattened = (flattened - mean) / std
         if self.chunk_size is None or flattened.size(0) <= self.chunk_size:
             transformed = self.kan(flattened)
         else:

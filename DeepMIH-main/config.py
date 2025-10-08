@@ -31,7 +31,7 @@ optim_step_2 = True
 optim_step_3 = True
 
 # Train:
-batch_size = 2
+batch_size = 6
 cropsize = 128
 betas = (0.5, 0.999)
 weight_step = 200
@@ -92,14 +92,25 @@ kan_identity_init = False
 # requested. A larger value helps break the symmetry if identity init is
 # re-enabled for experiments.
 kan_identity_jitter = 1e-2
+# Normalise the inputs passed to the KAN subnetworks to avoid huge gradients
+# when the surrounding CNN activations drift in scale.
+kan_normalize_input = True
+kan_normalization_eps = 1e-6
+# Apply a smaller learning rate to the KAN parameters; their spline bases can
+# become unstable when updated as aggressively as the convolutional weights.
+kan_param_lr_scale = 0.2
+# Optionally keep the KAN layers frozen for the first few epochs so that the
+# surrounding convolutions learn a sensible embedding before the expressive KAN
+# basis starts adapting. Set to 0 to disable the warm start.
+kan_freeze_epochs = 0
 # RRDB
 # Saving checkpoints:
-MODEL_PATH = '/root/autodl-fs/DeepMIH_main/model'
+MODEL_PATH = '/root/autodl-fs/deepnew/DeepMIH-main/model/'
 checkpoint_on_error = True
 SAVE_freq = 1
 
 
-TEST_PATH = '/home/jjp/DeepMIH/image/'
+TEST_PATH = '/root/autodl-fs/deepnew/DeepMIH-main/'
 
 TEST_PATH_cover = TEST_PATH + 'cover/'
 TEST_PATH_secret_1 = TEST_PATH + 'secret_1/'
@@ -119,10 +130,10 @@ trained_epoch = 3000
 
 pretrain = False
 # 主模型加载路径
-PRETRAIN_PATH = r'/root/autodl-fs/DeepMIH_main/model/'
+PRETRAIN_PATH = r'/root/autodl-fs/deepnew/DeepMIH-main/model/'
 suffix_pretrain = 'model_checkpoint_03000'
 
 # 第三子网络（ImpMapBlock）预训练路径
 # ⚠️ 注意：这里一定要是“model”不是“models”
-PRETRAIN_PATH_3 = r'/root/autodl-fs/DeepMIH_main/model/'
+PRETRAIN_PATH_3 = r'/root/autodl-fs/deepnew/DeepMIH-main/model/'
 suffix_pretrain_3 = 'model_checkpoint_03000'

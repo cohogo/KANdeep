@@ -12,6 +12,7 @@ import numpy as np
 import tqdm
 from model import *
 from imp_subnet import *
+from kan_layers import KANCouplingNet
 import torchvision.transforms as T
 import config as c
 import importlib
@@ -112,7 +113,78 @@ def _grad_norm(module):
         return 0.0
 
     return math.sqrt(total)
+def _unwrap_module(module):
+    """Return the underlying module when DataParallel is used."""
 
+    if isinstance(module, torch.nn.DataParallel):
+        return module.module
+    return module
+
+
+def _iter_kan_modules(module):
+    """Yield every KANCouplingNet contained within *module*."""
+
+    core = _unwrap_module(module)
+    for child in core.modules():
+        if isinstance(child, KANCouplingNet):
+            yield child
+
+
+def _count_kan_parameters(module):
+    """Count how many parameters live inside the KAN sub-networks."""
+
+    total = 0
+    for kan_module in _iter_kan_modules(module):
+        total += sum(param.numel() for param in kan_module.parameters())
+    return total
+
+
+def _set_kan_trainable(module, requires_grad: bool) -> None:
+    """Enable or disable gradients for every KAN block in *module*."""
+
+    for kan_module in _iter_kan_modules(module):
+        for param in kan_module.parameters():
+            param.requires_grad = requires_grad
+
+
+def _make_optimizer(
+    module,
+    base_lr: float,
+    betas,
+    weight_decay: float,
+    *,
+    eps: float = 1e-6,
+    kan_lr_scale: float = 1.0,
+):
+    """Create an Adam optimiser with a reduced LR for KAN parameters."""
+
+    kan_lr_scale = float(kan_lr_scale)
+    kan_ids = {id(param) for kan in _iter_kan_modules(module) for param in kan.parameters()}
+    regular_params = []
+    kan_params = []
+    for param in module.parameters():
+        if not param.requires_grad:
+            continue
+        if id(param) in kan_ids:
+            kan_params.append(param)
+        else:
+            regular_params.append(param)
+
+    param_groups = []
+    if regular_params:
+        param_groups.append({"params": regular_params, "lr": base_lr})
+    if kan_params:
+        param_groups.append({"params": kan_params, "lr": base_lr * kan_lr_scale})
+
+    if not param_groups:
+        raise ValueError("No trainable parameters were found when constructing the optimiser.")
+
+    return torch.optim.Adam(
+        param_groups,
+        betas=betas,
+        eps=eps,
+        weight_decay=weight_decay,
+    )
 
 _IDENTITY_INIT_MESSAGE_EMITTED = False
 _IDENTITY_LOSS_WARNING_EMITTED = False
@@ -348,30 +420,44 @@ def main():
     print(para1)
     print(para2)
     print(para3)
-    params_trainable1 = list(filter(lambda p: p.requires_grad, net1.parameters()))
-    params_trainable2 = list(filter(lambda p: p.requires_grad, net2.parameters()))
-    params_trainable3 = list(filter(lambda p: p.requires_grad, net3.parameters()))
-    optim1 = torch.optim.Adam(
-        params_trainable1,
-        lr=c.lr,
-        betas=c.betas,
-        eps=1e-6,
-        weight_decay=c.weight_decay,
+    kan_param_counts = {
+        "net1": _count_kan_parameters(net1),
+        "net2": _count_kan_parameters(net2),
+    }
+    if any(kan_param_counts.values()):
+        print(
+            "KAN parameter counts:",
+            {label: count for label, count in kan_param_counts.items() if count > 0},
+        )
+
+    kan_lr_scale = getattr(c, "kan_param_lr_scale", 1.0)
+    optim1 = _make_optimizer(
+        net1,
+        c.lr,
+        c.betas,
+        c.weight_decay,
+        kan_lr_scale=kan_lr_scale,
     )
-    optim2 = torch.optim.Adam(
-        params_trainable2,
-        lr=c.lr,
-        betas=c.betas,
-        eps=1e-6,
-        weight_decay=c.weight_decay,
+    optim2 = _make_optimizer(
+        net2,
+        c.lr,
+        c.betas,
+        c.weight_decay,
+        kan_lr_scale=kan_lr_scale,
     )
-    optim3 = torch.optim.Adam(
-        params_trainable3,
-        lr=c.lr3,
-        betas=c.betas,
-        eps=1e-6,
-        weight_decay=c.weight_decay,
+    optim3 = _make_optimizer(
+        net3,
+        c.lr3,
+        c.betas,
+        c.weight_decay,
+        kan_lr_scale=1.0,
     )
+    kan_freeze_epochs = max(0, int(getattr(c, "kan_freeze_epochs", 0)))
+    kan_warmup_complete = kan_freeze_epochs == 0
+    if kan_freeze_epochs > 0:
+        print(f"[Warmup] Freezing KAN blocks for the first {kan_freeze_epochs} epochs.")
+        _set_kan_trainable(net1, False)
+        _set_kan_trainable(net2, False)
     weight_scheduler1 = torch.optim.lr_scheduler.StepLR(optim1, c.weight_step, gamma=c.gamma)
     weight_scheduler2 = torch.optim.lr_scheduler.StepLR(optim2, c.weight_step, gamma=c.gamma)
     weight_scheduler3 = torch.optim.lr_scheduler.StepLR(optim3, c.weight_step, gamma=c.gamma)
@@ -420,6 +506,11 @@ def main():
 
         for epoch_idx in range(c.epochs):
             i_epoch = epoch_idx + c.trained_epoch + 1
+            if not kan_warmup_complete and epoch_idx >= kan_freeze_epochs:
+                print(f"[Warmup] Unfreezing KAN blocks at epoch {i_epoch}.")
+                _set_kan_trainable(net1, True)
+                _set_kan_trainable(net2, True)
+                kan_warmup_complete = True
             loss_history = []
             loss_history_g1 = []
             loss_history_g2 = []
