@@ -40,47 +40,68 @@ class Hinet_Dataset(Dataset):
         if self.mode == "train":
             # TRAIN SETTING
             if c.Dataset_mode == 'DIV2K':
-                self.TRAIN_PATH = c.TRAIN_PATH_DIV2K
-                self.format_train = 'png'
+                path = c.TRAIN_PATH_DIV2K
+                pattern = 'png'
                 print('TRAIN DATASET is DIV2K')
 
-            if c.Dataset_mode == 'COCO':
-                self.TRAIN_PATH = c.TEST_PATH_COCO
-                self.format_train = 'jpg'
+            elif c.Dataset_mode == 'COCO':
+                path = c.TEST_PATH_COCO
+                pattern = 'jpg'
                 print('TRAIN DATASET is COCO')
+            else:
+                raise ValueError(f"Unsupported Dataset_mode: {c.Dataset_mode}")
 
             # train
-            self.files = natsorted(sorted(glob.glob(self.TRAIN_PATH + "/*." + self.format_train)))
+            self.files = _collect_files(path, pattern, mode="train")
 
-        if self.mode == "val":
+        elif self.mode == "val":
             # VAL SETTING
             if c.Dataset_VAL_mode == 'DIV2K':
                 self.VAL_PATH = c.VAL_PATH_DIV2K
                 self.format_val = 'png'
                 print('VAL DATASET is DIV2K')
 
-            if c.Dataset_VAL_mode == 'COCO':
-                self.VAL_PATH = c.VAL_PATH_COCO
-                self.format_val = 'jpg'
+            elif c.Dataset_VAL_mode == 'COCO':
+                path = c.VAL_PATH_COCO
+                pattern = 'jpg'
                 print('VAL DATASET is COCO')
 
-            if c.Dataset_VAL_mode == 'ImageNet':
-                self.VAL_PATH = c.VAL_PATH_IMAGENET
-                self.format_val = 'JPEG'
+            elif c.Dataset_VAL_mode == 'ImageNet':
+                path = c.VAL_PATH_IMAGENET
+                pattern = 'JPEG'
                 print('VAL DATASET is ImageNet')
+            else:
+                raise ValueError(f"Unsupported Dataset_VAL_mode: {c.Dataset_VAL_mode}")
 
             # test
-            self.files = sorted(glob.glob(self.VAL_PATH + "/*." + self.format_val))
+            self.files = _collect_files(path, pattern, mode="val")
+
+        else:
+            raise ValueError(f"Unsupported dataset mode: {self.mode}")
 
     def __getitem__(self, index):
-        try:
-                image = Image.open(self.files[index])
-                image = to_rgb(image)
-                item = self.transform(image)
-                return item
+        if not self.files:
+            raise RuntimeError(f"No files available for mode={self.mode}. Check dataset paths in config.py.")
 
-        except:
-            return self.__getitem__(index + 1)
+        length = len(self.files)
+        index = index % length
+
+        for offset in range(length):
+            real_index = (index + offset) % length
+            path = self.files[real_index]
+            try:
+                with Image.open(path) as img:
+                    image = to_rgb(img)
+                if self.transform is not None:
+                    return self.transform(image)
+                return image
+            except Exception as exc:
+                print(f"[WARN] Failed to load {path}: {exc}. Trying next file.")
+
+        raise RuntimeError(
+            "All files in dataset failed to load. "
+            "Ensure the dataset does not contain only corrupt images."
+        )
 
     def __len__(self):
         return len(self.files)

@@ -273,7 +273,7 @@ def load(name, net, optim, skip_substrings=None):
             optimizer_status = True
         except Exception as exc:
             print(f'Cannot load optimizer for some reason or other: {exc}')
-            ptimizer_status = False
+            optimizer_status = False
     return {
         'loaded': len(filtered_state),
         'skipped_mismatch': len(skipped_mismatch),

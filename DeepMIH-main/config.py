@@ -80,7 +80,18 @@ kan_stage1_use_translation_nets = False
 # Stage 2 uses KAN for the scale networks but keeps translations as CNNs
 kan_stage2_use_scale_nets = True
 kan_stage2_use_translation_nets = False
+# Set ``kan_chunk_size`` to balance memory consumption with a tiny amount of
+# extra Python looping overhead.  Larger chunks give slightly better
+# throughput, while ``None`` disables chunking entirely for maximal speed on
+# GPUs with ample memory.
 kan_chunk_size = 4096
+# Disable the near-identity initialization used by the KAN coupling blocks so
+# that training does not get stuck with zero losses and gradients.
+kan_identity_init = False
+# Increase the jitter that perturbs the KAN weights when an identity init is
+# requested. A larger value helps break the symmetry if identity init is
+# re-enabled for experiments.
+kan_identity_jitter = 1e-2
 # RRDB
 # Saving checkpoints:
 MODEL_PATH = '/root/autodl-fs/DeepMIH_main/model'
