@@ -24,7 +24,7 @@ class KANCouplingNet(nn.Module):
         hidden_dims: Iterable[int] | None = None,
         *,
         grid: int = 5,
-        k: int = 3,
+        k: int = 3, 
         symbolic_enabled: bool = False,
         enable_speed: bool = True,
         identity_init: bool = False,
