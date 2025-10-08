@@ -1,20 +1,3 @@
-"""LoKi-style KAN adapter blocks for DeepMIH coupling sub-networks.
-
-This module introduces two building blocks:
-
-* :class:`KANLayer` implements a lightweight Kolmogorov--Arnold layer where every edge
-  is parameterised by a learnable residual spline activation.  The formulation mirrors
-  the definition from the KAN paper but keeps the grid compact (small number of basis
-  functions) so that it can act as a drop-in replacement for the tiny MLPs used in the
-  coupling blocks.
-* :class:`LoKiKANAdapter` wraps two KAN layers between a linear bottleneck/expansion pair,
-  matching the LoKi adapter design that serves as a learnable activation while
-  controlling memory usage.
-
-The classes are self-contained and can be imported without altering existing training
-scripts.  A later step will swap the stage-2 scale subnetworks to use the adapter.
-"""
-
 from __future__ import annotations
 
 from typing import Optional
@@ -208,15 +191,15 @@ class LoKiKANAdapter(nn.Module):
     """Two-layer KAN adapter with linear bottleneck/expansion.
 
     The adapter mirrors the LoKi design: a linear down-projection, two KAN layers acting
-    as a learnable activation in the bottleneck space, and a linear up-projection back to
-    the original feature dimension.  Optional layer normalisation and dropout can be
+    as a learnable activation in the bottleneck space, and a linear up-projection to the
+    requested output dimensionality.  Optional layer normalisation and dropout can be
     enabled to match surrounding Transformer-style blocks if necessary.
     """
 
     def __init__(
         self,
         d_in: int,
-        *,
+        d_out: int,
         bottleneck_ratio: float = 1.0 / 16.0,
         hidden_features: Optional[int] = 32,
         grid_size: int = 4,
@@ -228,6 +211,8 @@ class LoKiKANAdapter(nn.Module):
         super().__init__()
         if d_in <= 0:
             raise ValueError("d_in must be positive")
+        if d_out <= 0:
+            raise ValueError("d_out must be positive")
         if not 0 < bottleneck_ratio <= 1:
             raise ValueError("bottleneck_ratio must be in (0, 1]")
         bottleneck_dim = max(1, int(round(d_in * bottleneck_ratio)))
@@ -251,7 +236,7 @@ class LoKiKANAdapter(nn.Module):
             order=order,
             normalize_input=normalize_input,
         )
-        self.up = nn.Linear(bottleneck_dim, d_in)
+        self.up = nn.Linear(bottleneck_dim, d_out)
         self.dropout = nn.Dropout(activation_dropout) if activation_dropout > 0 else nn.Identity()
 
         self.reset_parameters()
@@ -262,13 +247,7 @@ class LoKiKANAdapter(nn.Module):
         nn.init.xavier_uniform_(self.up.weight)
         nn.init.zeros_(self.up.bias)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        original_shape = x.shape
-        if original_shape[-1] != self.down.in_features:
-            raise ValueError(
-                f"Expected last dimension {self.down.in_features}, got {original_shape[-1]}"
-            )
-        x2d = x.reshape(-1, original_shape[-1])
+    def _forward_flat(self, x2d: torch.Tensor) -> torch.Tensor:
         z = self.down(x2d)
         if self.norm is not None:
             z = self.norm(z)
@@ -276,6 +255,27 @@ class LoKiKANAdapter(nn.Module):
         z = self.dropout(F.silu(z))
         z = self.kan2(z)
         z = self.dropout(F.silu(z))
-        out = self.up(z)
-        out = out.view(*original_shape[:-1], self.down.in_features)
+        return self.up(z)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() == 4:
+            b, c, h, w = x.shape
+            if c != self.down.in_features:
+                raise ValueError(
+                    f"Expected channel dimension {self.down.in_features}, got {c}"
+                )
+            x_flat = x.permute(0, 2, 3, 1).reshape(-1, c)
+            out = self._forward_flat(x_flat)
+            out = out.view(b, h, w, self.up.out_features).permute(0, 3, 1, 2)
+            return out
+
+        if x.shape[-1] != self.down.in_features:
+            raise ValueError(
+                f"Expected last dimension {self.down.in_features}, got {x.shape[-1]}"
+            )
+
+        leading_shape = x.shape[:-1]
+        x_flat = x.reshape(-1, x.shape[-1])
+        out = self._forward_flat(x_flat)
+        out = out.view(*leading_shape, self.up.out_features)
         return out
