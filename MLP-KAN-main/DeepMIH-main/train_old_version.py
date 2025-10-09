@@ -22,7 +22,7 @@ import warnings
 from vgg_loss import VGGLoss
 warnings.filterwarnings("ignore")
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 
 def computePSNR(origin, pred):
@@ -42,9 +42,9 @@ def computePSNR(origin, pred):
 
 
 def gauss_noise(shape):
-    noise = torch.zeros(shape).cuda()
+    noise = torch.zeros(shape).to(device)
     for i in range(noise.shape[0]):
-        noise[i] = torch.randn(noise[i].shape).cuda()
+        noise[i] = torch.randn(noise[i].shape).to(device)
 
     return noise
 
@@ -99,7 +99,7 @@ def load(name, net, optim):
 def init_net3(mod):
     for key, param in mod.named_parameters():
         if param.requires_grad:
-            param.data = 0.1 * torch.randn(param.data.shape).cuda()
+            param.data = 0.1 * torch.randn(param.data.shape).to(device)
 
 
 #####################
@@ -161,8 +161,6 @@ try:
         #################
         #     train:    #
         #################
-        vgg_loss = VGGLoss(3, 1, False)
-        vgg_loss.to(device)
         for i_batch, data in enumerate(trainloader):
             # data preparation
             data = data.to(device)
@@ -185,7 +183,7 @@ try:
             output_z_dwt_1 = output_dwt_1.narrow(1, 4 * c.channels_in, 4 * c.channels_in)  # channels = 12
 
             # get steg1
-            output_steg_1 = iwt(output_steg_dwt_1)  # channels = 3
+            output_steg_1 = iwt(output_steg_dwt_1).to(device)  # channels = 3
 
             #################
             #    forward2:   #
@@ -208,7 +206,7 @@ try:
             output_z_dwt_2 = output_dwt_2.narrow(1, 4 * c.channels_in, output_dwt_2.shape[1] - 4 * c.channels_in)  # channels = 24
 
             # get steg2
-            output_steg_2 = iwt(output_steg_dwt_2)  # channels = 3
+            output_steg_2 = iwt(output_steg_dwt_2).to(device)  # channels = 3
 
             #################
             #   backward2:   #
@@ -222,10 +220,10 @@ try:
             rev_dwt_2 = net2(output_rev_dwt_2, rev=True)  # channels = 36
 
             rev_steg_dwt_1 = rev_dwt_2.narrow(1, 0, 4 * c.channels_in)  # channels = 12
-            rev_secret_dwt_2 = rev_dwt_2.narrow(1, rev_dwt_2.shape[1] - 4 * c.channels_in, 4 * c.channels_in)  # channels = 12
+            rev_secret_dwt_2 = rev_dwt_2.narrow(1, 4 * c.channels_in, 4 * c.channels_in)  # channels = 12
 
-            rev_steg_1 = iwt(rev_steg_dwt_1)  # channels = 3
-            rev_secret_2 = iwt(rev_secret_dwt_2)  # channels = 3
+            rev_steg_1 = iwt(rev_steg_dwt_1).to(device)  # channels = 3
+            rev_secret_2 = iwt(rev_secret_dwt_2).to(device)  # channels = 3
 
             #################
             #   backward1:   #
@@ -234,20 +232,14 @@ try:
 
             rev_dwt_1 = net1(output_rev_dwt_1, rev=True)  # channels = 36
 
-            rev_secret_dwt = rev_dwt_1.narrow(1, rev_dwt_1.shape[1] - 4 * c.channels_in, 4 * c.channels_in)  # channels = 12
-            rev_secret_1 = iwt(rev_secret_dwt)
+            rev_secret_dwt = rev_dwt_1.narrow(1, 4 * c.channels_in, 4 * c.channels_in)  # channels = 12
+            rev_secret_1 = iwt(rev_secret_dwt).to(device)
 
             #################
             #     loss:     #
             #################
             g_loss_1 = guide_loss(output_steg_1.cuda(), cover.cuda())
             g_loss_2 = guide_loss(output_steg_2.cuda(), cover.cuda())
-
-            vgg_on_cov = vgg_loss(cover)
-            vgg_on_steg1 = vgg_loss(output_steg_1)
-            vgg_on_steg2 = vgg_loss(output_steg_2)
-
-            perc_loss = guide_loss(vgg_on_cov, vgg_on_steg1) + guide_loss(vgg_on_cov, vgg_on_steg2)
 
             l_loss_1 = guide_loss(output_steg_dwt_low_1.cuda(), cover_dwt_low.cuda())
             l_loss_2 = guide_loss(output_steg_dwt_low_2.cuda(), cover_dwt_low.cuda())
@@ -256,7 +248,6 @@ try:
 
             total_loss = c.lamda_reconstruction_1 * r_loss_1 + c.lamda_reconstruction_2 * r_loss_2 + c.lamda_guide_1 * g_loss_1\
                          + c.lamda_guide_2 * g_loss_2 + c.lamda_low_frequency_1 * l_loss_1 + c.lamda_low_frequency_2 * l_loss_2
-            total_loss = total_loss + 0.01 * perc_loss
             total_loss.backward()
 
             if c.optim_step_1:
@@ -311,7 +302,7 @@ try:
                     output_z_dwt_1 = output_dwt_1.narrow(1, 4 * c.channels_in, 4 * c.channels_in)  # channels = 12
 
                     # get steg1
-                    output_steg_1 = iwt(output_steg_dwt_1)  # channels = 3
+                    output_steg_1 = iwt(output_steg_dwt_1).to(device)  # channels = 3
 
                     #################
                     #    forward2:   #
@@ -330,7 +321,7 @@ try:
                     output_z_dwt_2 = output_dwt_2.narrow(1, 4 * c.channels_in, output_dwt_2.shape[1] - 4 * c.channels_in)  # channels = 24
 
                     # get steg2
-                    output_steg_2 = iwt(output_steg_dwt_2)  # channels = 3
+                    output_steg_2 = iwt(output_steg_dwt_2).to(device)  # channels = 3
 
                     #################
                     #   backward2:   #
@@ -346,8 +337,8 @@ try:
                     rev_steg_dwt_1 = rev_dwt_2.narrow(1, 0, 4 * c.channels_in)  # channels = 12
                     rev_secret_dwt_2 = rev_dwt_2.narrow(1, output_dwt_2.shape[1] - 4 * c.channels_in, 4 * c.channels_in)  # channels = 12
 
-                    rev_steg_1 = iwt(rev_steg_dwt_1)  # channels = 3
-                    rev_secret_2 = iwt(rev_secret_dwt_2)  # channels = 3
+                    rev_steg_1 = iwt(rev_steg_dwt_1).to(device)  # channels = 3
+                    rev_secret_2 = iwt(rev_secret_dwt_2).to(device)  # channels = 3
 
                     #################
                     #   backward1:   #
@@ -357,7 +348,7 @@ try:
                     rev_dwt_1 = net1(output_rev_dwt_1, rev=True)  # channels = 24
 
                     rev_secret_dwt = rev_dwt_1.narrow(1, rev_dwt_1.shape[1] - 4 * c.channels_in, 4 * c.channels_in)  # channels = 12
-                    rev_secret_1 = iwt(rev_secret_dwt)
+                    rev_secret_1 = iwt(rev_secret_dwt).to(device)
 
                     secret_rev1_255 = rev_secret_1.cpu().numpy().squeeze() * 255
                     secret_rev2_255 = rev_secret_2.cpu().numpy().squeeze() * 255
@@ -377,17 +368,6 @@ try:
                     psnr_c1.append(psnr_temp_c1)
                     psnr_temp_c2 = computePSNR(cover_255, steg_2_255)
                     psnr_c2.append(psnr_temp_c2)
-                    #
-                    # if i_epoch % (c.val_freq * 30) == 0:
-                    #     torchvision.utils.save_image(cover, c.IMAGE_PATH_cover + '%.5d.png' % i_epoch)
-                    #     torchvision.utils.save_image(secret_1, c.IMAGE_PATH_secret_1 + '%.5d.png' % i_epoch)
-                    #     torchvision.utils.save_image(secret_2, c.IMAGE_PATH_secret_2 + '%.5d.png' % i_epoch)
-                    #
-                    #     torchvision.utils.save_image(output_steg_1, c.IMAGE_PATH_steg_1 + '%.5d.png' % i_epoch)
-                    #     torchvision.utils.save_image(rev_secret_1, c.IMAGE_PATH_secret_rev_1 + '%.5d.png' % i_epoch)
-                    #
-                    #     torchvision.utils.save_image(output_steg_2, c.IMAGE_PATH_steg_2 + '%.5d.png' % i_epoch)
-                    #     torchvision.utils.save_image(rev_secret_2, c.IMAGE_PATH_secret_rev_2 + '%.5d.png' % i_epoch)
 
                 writer.add_scalars("PSNR", {"S1 average psnr": np.mean(psnr_s1)}, i_epoch)
                 writer.add_scalars("PSNR", {"C1 average psnr": np.mean(psnr_c1)}, i_epoch)
